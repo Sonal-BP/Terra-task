@@ -152,7 +152,7 @@ resource "aws_lb_listener" "http" {
 # Auto Scaling Launch Configuration
 resource "aws_launch_configuration" "app" {
   name_prefix          = "app-"
-  image_id             = "ami-0075013580f6322a1"  
+  image_id             = var.ami_id 
   instance_type        = "t2.micro"
   security_groups      = [aws_security_group.allow_all.id]
   user_data            = <<-EOF
