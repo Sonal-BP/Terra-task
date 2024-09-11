@@ -1,7 +1,5 @@
-#This change belongs to sprint2
 provider "aws" {
-  region     = "us-west-2"
- 
+  region = "us-west-2"
 }
 
 # VPC
@@ -16,9 +14,9 @@ resource "aws_vpc" "main" {
 
 # Public Subnets
 resource "aws_subnet" "public_subnet_1" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = var.public_subnet_cidrs[0]
-  availability_zone = "us-west-2a"
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = var.public_subnet_cidrs[0]
+  availability_zone       = "us-west-2a"
   map_public_ip_on_launch = true
   tags = {
     Name = "public-subnet-1"
@@ -26,9 +24,9 @@ resource "aws_subnet" "public_subnet_1" {
 }
 
 resource "aws_subnet" "public_subnet_2" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = var.public_subnet_cidrs[1]
-  availability_zone = "us-west-2b"
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = var.public_subnet_cidrs[1]
+  availability_zone       = "us-west-2b"
   map_public_ip_on_launch = true
   tags = {
     Name = "public-subnet-2"
@@ -39,7 +37,7 @@ resource "aws_subnet" "public_subnet_2" {
 resource "aws_subnet" "private_subnet_1" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = var.private_subnet_cidrs[0]
-  availability_zone = "us-west-2c"
+  availability_zone = "us-west-2a"  # Updated Availability Zone
   tags = {
     Name = "private-subnet-1"
   }
@@ -48,7 +46,7 @@ resource "aws_subnet" "private_subnet_1" {
 resource "aws_subnet" "private_subnet_2" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = var.private_subnet_cidrs[1]
-  availability_zone = "us-west-2d"
+  availability_zone = "us-west-2b"  # Updated Availability Zone
   tags = {
     Name = "private-subnet-2"
   }
@@ -85,50 +83,85 @@ resource "aws_route_table_association" "public_subnet_2" {
   route_table_id = aws_route_table.public.id
 }
 
+# Private Route Table
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+  tags = {
+    Name = "private-route-table"
+  }
+}
+
+# Private Route Table Association for Private Subnets
+resource "aws_route_table_association" "private_subnet_1" {
+  subnet_id      = aws_subnet.private_subnet_1.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "private_subnet_2" {
+  subnet_id      = aws_subnet.private_subnet_2.id
+  route_table_id = aws_route_table.private.id
+}
+
 # Security Groups
 resource "aws_security_group" "allow_all" {
   vpc_id = aws_vpc.main.id
+
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
   ingress {
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  tags = {
-    Name = "allow_all"
-  }
 
-  #Another inbound & outbound rules
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  tags = {
+    Name = "allow_all"
+  }
+}
+
+# Target Group
+resource "aws_lb_target_group" "app_tg" {
+  name     = "app-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    path                = "/"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold    = 2
+    unhealthy_threshold  = 2
+  }
+
+  tags = {
+    Name = "app-tg"
+  }
 }
 
 # ALB
 resource "aws_lb" "app_lb" {
-  name               = "app-lb"
-  internal           = false
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.allow_all.id]
-  subnets            = [aws_subnet.public_subnet_1.id, aws_subnet.public_subnet_2.id]
-  enable_deletion_protection = false
+  name                        = "app-lb"
+  internal                    = false
+  load_balancer_type          = "application"
+  security_groups             = [aws_security_group.allow_all.id]
+  subnets                     = [aws_subnet.public_subnet_1.id, aws_subnet.public_subnet_2.id]
+  enable_deletion_protection  = false
   enable_cross_zone_load_balancing = true
-  idle_timeout       = 60
+  idle_timeout                = 60
   tags = {
     Name = "app-lb"
   }
@@ -141,11 +174,11 @@ resource "aws_lb_listener" "http" {
   protocol          = "HTTP"
 
   default_action {
-    type = "fixed-response"
-    fixed_response {
-      content_type = "text/plain"
-      message_body = "Service is up"
-      status_code  = "200"
+    type = "forward"
+    forward {
+      target_group {
+        arn = aws_lb_target_group.app_tg.arn
+      }
     }
   }
 }
@@ -153,7 +186,7 @@ resource "aws_lb_listener" "http" {
 # Auto Scaling Launch Configuration
 resource "aws_launch_configuration" "app" {
   name_prefix          = "app-"
-  image_id             = var.ami_id 
+  image_id             = "ami-0075013580f6322a1"  # Ensure this AMI has the required OS
   instance_type        = "t2.micro"
   security_groups      = [aws_security_group.allow_all.id]
   user_data            = <<-EOF
@@ -162,14 +195,16 @@ resource "aws_launch_configuration" "app" {
                             sudo apt-get install -y nginx
                             sudo systemctl start nginx
                             sudo systemctl enable nginx
-                            # Add Tomcat installation here
                             EOF
 }
 
 # Auto Scaling Group
 resource "aws_autoscaling_group" "app" {
   launch_configuration = aws_launch_configuration.app.id
-  vpc_zone_identifier = [aws_subnet.public_subnet_1.id, aws_subnet.public_subnet_2.id]
+  vpc_zone_identifier = [
+    aws_subnet.private_subnet_1.id,
+    aws_subnet.private_subnet_2.id
+  ]
   min_size             = 1
   max_size             = 3
   desired_capacity     = 1
@@ -178,6 +213,7 @@ resource "aws_autoscaling_group" "app" {
     value               = "app-instance"
     propagate_at_launch = true
   }
+  target_group_arns = [aws_lb_target_group.app_tg.arn]
 }
 
 # Auto Scaling Policy
