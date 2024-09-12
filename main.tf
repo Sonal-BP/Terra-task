@@ -1,4 +1,4 @@
-#This is feature branch
+#This is feature branch for checking second build
 ########
 provider "aws" {
   region = "us-west-2"
